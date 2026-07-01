@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Priced In — forward catalyst terminal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<style>
+  html,body{margin:0;background:#0A0F14}
+  ::-webkit-scrollbar{display:none} *{-ms-overflow-style:none;scrollbar-width:none}
+  input::placeholder{color:#5B6B78}
+  @keyframes pipulse{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+/* ============================================================
+   CONFIG — paste your Supabase project URL + ANON key here.
+   (Settings → API. ANON key only — never the service key.)
+   Leave blank to run in sample mode.
+============================================================ */
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+
+const { useState, useEffect, useMemo } = React;
+
+const C = {
+  bg:"#0A0F14", panel:"#10161D", panel2:"#0D1319", line:"#1D2833",
+  lineSoft:"#16202A", text:"#E8EEF4", dim:"#93A1AE", faint:"#5B6B78",
+  cyan:"#4FD8C6", cyanDim:"rgba(79,216,198,0.16)",
+  amber:"#F5B84A", amberDim:"rgba(245,184,74,0.16)", rose:"#E36C6C",
+};
+const mono = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
+const sans = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+const disp = "'Archivo', -apple-system, sans-serif";
+
+const FILTERS = [
+  {id:"ALL",label:"All"},{id:"FDA",label:"FDA"},{id:"READOUT",label:"Readouts"},
+  {id:"MA",label:"M&A"},{id:"FLOW",label:"Supply"},
+];
+
+/* ---------- sample fallback (fictional) ---------- */
+const SAMPLE = [
+  { id:"s1", ticker:"AXPH", company:"Axiapharm (sample)", cat:"FDA", badge:"PDUFA",
+    event:"PDUFA — axelotinib in 2L NSCLC", days:17, dateLabel:"in 17d",
+    window_label:"Confirmed", imp:38, hist:62, histN:41, histMeasured:false,
+    spot:10.12, straddle:3.85, expiry:"—", callSym:"AXPH…C", putSym:"AXPH…P",
+    spread:9, oi:4210, runway:6, shelf:false, shelfNote:"No recent shelf on file",
+    buys:3, sells:0, tape:[{owner:"CEO Marsh",role:"CEO",code:"P",value:1200000,filed:"—"},
+    {owner:"Dir. Okafor",role:"Director",code:"P",value:310000,filed:"—"},
+    {owner:"CMO Reyes",role:"CMO",code:"P",value:180000,filed:"—"}],
+    note:"[SAMPLE] Connect Supabase in the config block for live data.", classLabel:"pdufa_post_adcom" },
+  { id:"s2", ticker:"ZPHR", company:"Zephyra Bio (sample)", cat:"READOUT", badge:"PH3",
+    event:"Ph3 topline — ZPH-201 in IPF", days:33, dateLabel:"in 33d",
+    window_label:"Est. window", imp:44, hist:92, histN:18, histMeasured:false,
+    spot:13.9, straddle:6.1, expiry:"—", callSym:"ZPHR…C", putSym:"ZPHR…P",
+    spread:22, oi:980, runway:4, shelf:true, shelfNote:"S-3 filed (sample)",
+    buys:1, sells:0, tape:[{owner:"Dir. Sato",role:"Director",code:"P",value:60000,filed:"—"}],
+    note:"[SAMPLE] Biggest gap on the sample board.", classLabel:"ph3_topline_ipf" },
+  { id:"s3", ticker:"TRBX", company:"Terabax (sample)", cat:"MA", badge:"13D",
+    event:"Strategic review — 13D filed (8.4% holder)", days:45, dateLabel:"in 45d",
+    window_label:"Est. window", imp:21, hist:33, histN:26, histMeasured:false,
+    spot:15.3, straddle:2.6, expiry:"—", callSym:"TRBX…C", putSym:"TRBX…P",
+    spread:14, oi:2050, runway:9, shelf:false, shelfNote:"No recent shelf on file",
+    buys:4, sells:0, tape:[{owner:"CEO Brandt",role:"CEO",code:"P",value:400000,filed:"—"},
+    {owner:"Dir. Ilyes",role:"Director",code:"P",value:205000,filed:"—"},
+    {owner:"Dir. Cho",role:"Director",code:"P",value:150000,filed:"—"},
+    {owner:"CFO Nassar",role:"CFO",code:"P",value:120000,filed:"—"}],
+    note:"[SAMPLE] Heaviest insider cluster on the sample board.", classLabel:"strategic_review" },
+];
+
+/* ---------- helpers ---------- */
+const pole = (e) => {
+  if (!e.imp || !e.hist) return "fair";
+  return e.hist >= e.imp*1.25 ? "under" : e.imp >= e.hist*1.25 ? "rich" : "fair";
+};
+const poleMeta = {
+  under:{color:C.cyan, dimBg:C.cyanDim, label:"UNDERPRICED VOL"},
+  rich:{color:C.amber, dimBg:C.amberDim, label:"RICH PREMIUM"},
+  fair:{color:C.faint, dimBg:"rgba(91,107,120,0.14)", label:"FAIRLY PRICED"},
+};
+const ratioOf = (e) => (Math.max(e.imp,e.hist)/Math.min(e.imp,e.hist)).toFixed(1);
+const fmt$ = (v) => v>=1e6 ? "$"+(v/1e6).toFixed(1)+"M" : "$"+Math.round(v/1e3)+"K";
+
+/* Edge score = four 0–25 components, documented so users trust it. */
+function scoreParts(e){
+  let gap = 0;
+  if (e.imp && e.hist) gap = Math.min(25, Math.round((Math.max(e.imp,e.hist)/Math.min(e.imp,e.hist)-1)*30));
+  let insider = Math.max(0, Math.min(25, 5 + (e.buys||0)*6 - (e.sells||0)*4));
+  let balance = 12;
+  if (e.runway != null) balance = e.runway>=6 ? 20 : e.runway>=4 ? 12 : 5;
+  if (e.shelf) balance = Math.max(0, balance-8);
+  let conf = e.window_label==="Confirmed" ? 22 : 12;
+  if (e.spread!=null && e.spread>25) conf = Math.max(4, conf-8);   // untradeable = low confidence in edge capture
+  return [["Pricing gap",gap],["Insider signal",insider],["Balance sheet",balance],["Tradability + date",conf]];
+}
+const scoreOf = (e) => scoreParts(e).reduce((a,[,p])=>a+p,0);
+const scoreColor = (s) => s>=70 ? C.cyan : s>=55 ? C.text : C.faint;
+
+/* ---------- signature element: the gap gauge ---------- */
+function GapGauge({e}){
+  const p = pole(e), m = poleMeta[p];
+  if (!e.imp && !e.hist) return (
+    <div style={{fontFamily:mono,fontSize:10,color:C.faint}}>NO OPTIONS PRICING YET — next hourly pass, or no listed chain</div>
+  );
+  const imp = e.imp||0, hist = e.hist||0;
+  const max = Math.max(imp,hist)*1.18 || 1;
+  const ix = imp/max*100, hx = hist/max*100;
+  const left = Math.min(ix,hx), width = Math.abs(hx-ix);
+  return (
+    <div>
+      <div style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontFamily:mono,fontSize:10,letterSpacing:"0.06em"}}>
+        <span style={{color:C.dim}}>IMP <span style={{color:C.text}}>{imp?imp+"%":"—"}</span></span>
+        <span style={{color:C.dim}}>HIST <span style={{color:m.color}}>{hist?hist+"%":"—"}</span>
+          <span style={{color:C.faint}}> · n={e.histN||"?"}{e.histMeasured?"":" prior"}</span></span>
+      </div>
+      <div style={{position:"relative",width:"100%",height:6,borderRadius:99,background:C.lineSoft}}>
+        <div style={{position:"absolute",left:left+"%",width:width+"%",top:0,bottom:0,background:m.dimBg,borderRadius:99}}/>
+        <div style={{position:"absolute",left:ix+"%",top:"50%",transform:"translate(-50%,-50%)",width:10,height:10,borderRadius:99,border:"2px solid "+C.text,background:C.bg}}/>
+        <div style={{position:"absolute",left:hx+"%",top:"50%",transform:"translate(-50%,-50%)",width:10,height:10,borderRadius:99,background:m.color}}/>
+      </div>
+    </div>
+  );
+}
+function VerdictChip({e}){
+  const p = pole(e), m = poleMeta[p];
+  return <span style={{fontFamily:mono,fontSize:9.5,letterSpacing:"0.08em",color:m.color,background:m.dimBg,borderRadius:4,padding:"2px 6px",whiteSpace:"nowrap"}}>
+    {m.label}{(p!=="fair"&&e.imp&&e.hist)?" "+ratioOf(e)+"×":""}</span>;
+}
+function SectionLabel({children,pro}){
+  return <div style={{display:"flex",alignItems:"center",gap:8,margin:"14px 0 8px"}}>
+    <span style={{fontFamily:mono,fontSize:9.5,letterSpacing:"0.14em",color:C.faint}}>{children}</span>
+    {pro && <span style={{fontFamily:mono,fontSize:8.5,color:C.amber,border:"1px solid "+C.amber,borderRadius:3,padding:"0 4px",opacity:.85}}>PRO</span>}
+    <div style={{flex:1,height:1,background:C.lineSoft}}/>
+  </div>;
+}
+
+/* ---------- histogram from the outcomes library ---------- */
+function Histogram({e, outcomes}){
+  const pool = outcomes.filter(o=>o.event_class===e.classLabel);
+  if (pool.length < 4) return <div style={{fontFamily:mono,fontSize:10,color:C.faint}}>
+    LIBRARY BUILDING — {pool.length} measured outcome{pool.length===1?"":"s"} for this class so far; showing seeded prior above.</div>;
+  const buckets = [0,0,0,0,0,0];
+  pool.forEach(o=>{ buckets[Math.min(5,Math.floor(o.realized_move/15))]++; });
+  const maxN = Math.max(...buckets,1);
+  const labels = ["0–15","15–30","30–45","45–60","60–75","75+"];
+  const ib = e.imp ? Math.min(5,Math.floor(e.imp/15)) : -1;
+  const hb = e.hist ? Math.min(5,Math.floor(e.hist/15)) : -1;
+  const m = poleMeta[pole(e)];
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:4,height:56}}>
+        {buckets.map((n,i)=><div key={i} style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"flex-end",height:"100%"}}>
+          <div style={{width:"100%",borderRadius:2,height:(n/maxN*100)+"%",minHeight:n>0?3:0,background:i===hb?m.color:C.line}}/>
+        </div>)}
+      </div>
+      <div style={{display:"flex",gap:4,marginTop:4}}>
+        {labels.map((b,i)=><div key={b} style={{flex:1,textAlign:"center",fontFamily:mono,fontSize:8.5,color:C.faint}}>
+          <div>{b}</div><div style={{height:12}}>
+            {i===ib && <span style={{color:C.text}}>▲imp</span>}
+            {i===hb && i!==ib && <span style={{color:m.color}}>▲hist</span>}
+          </div></div>)}
+      </div>
+      <div style={{fontFamily:mono,fontSize:9,color:C.faint,marginTop:2}}>Your measured outcomes — {e.classLabel} (n={pool.length})</div>
+    </div>
+  );
+}
+
+/* ---------- pure-SVG parity chart ---------- */
+function ParityChart({events,onPick}){
+  const pts = events.filter(e=>e.imp&&e.hist);
+  const W=340,H=300,P=34, max=110;
+  const X = v=>P+(v/max)*(W-P-12), Y = v=>H-P-(v/max)*(H-P-16);
+  return (
+    <div style={{background:C.panel,border:"1px solid "+C.line,borderRadius:12,padding:14}}>
+      <div style={{fontFamily:mono,fontSize:10,letterSpacing:"0.12em",color:C.faint,marginBottom:6}}>
+        IMPLIED vs HISTORICAL — DISTANCE FROM THE LINE IS THE EDGE</div>
+      {pts.length===0 ? <div style={{fontFamily:mono,fontSize:10,color:C.faint,padding:"30px 0"}}>NO PRICED EVENTS YET</div> :
+      <svg viewBox={"0 0 "+W+" "+H} style={{width:"100%",height:"auto"}}>
+        {[0,25,50,75,100].map(v=><g key={v}>
+          <line x1={X(v)} y1={Y(0)} x2={X(v)} y2={Y(max)} stroke={C.lineSoft}/>
+          <line x1={X(0)} y1={Y(v)} x2={X(max)} y2={Y(v)} stroke={C.lineSoft}/>
+          <text x={X(v)} y={H-P+14} fill={C.faint} fontSize="8" fontFamily={mono} textAnchor="middle">{v}</text>
+          <text x={P-6} y={Y(v)+3} fill={C.faint} fontSize="8" fontFamily={mono} textAnchor="end">{v}</text>
+        </g>)}
+        <line x1={X(0)} y1={Y(0)} x2={X(max)} y2={Y(max)} stroke={C.faint} strokeDasharray="4 4"/>
+        {pts.map(e=>{
+          const m = poleMeta[pole(e)];
+          return <g key={e.id} onClick={()=>onPick(e.id)} style={{cursor:"pointer"}}>
+            <circle cx={X(e.imp)} cy={Y(e.hist)} r={5+scoreOf(e)/18} fill={m.color} fillOpacity={pole(e)==="fair"?0.45:0.9}/>
+            <text x={X(e.imp)} y={Y(e.hist)-11} fill={C.dim} fontSize="8.5" fontFamily={mono} textAnchor="middle">{e.ticker}</text>
+          </g>;
+        })}
+        <text x={W-12} y={H-P-6} fill={C.faint} fontSize="8" fontFamily={mono} textAnchor="end">implied %</text>
+        <text x={P+4} y={16} fill={C.faint} fontSize="8" fontFamily={mono}>historical %</text>
+      </svg>}
+      <div style={{display:"flex",gap:16,marginTop:4,fontFamily:mono,fontSize:9.5}}>
+        <span style={{color:C.cyan}}>● above line — vol underpriced</span>
+        <span style={{color:C.amber}}>● below — premium rich</span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- event card ---------- */
+function EventCard({e,open,onToggle,watched,onBell,outcomes}){
+  const m = poleMeta[pole(e)];
+  const parts = scoreParts(e), score = scoreOf(e);
+  const spreadBad = e.spread!=null && e.spread>25;
+  return (
+    <div style={{background:C.panel,border:"1px solid "+(open?m.color+"55":C.line),borderRadius:12,overflow:"hidden"}}>
+      <div onClick={onToggle} style={{padding:14,cursor:"pointer"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontFamily:mono,fontWeight:700,fontSize:15,color:C.text}}>{e.ticker}</span>
+          <span style={{fontFamily:mono,fontSize:9,letterSpacing:"0.08em",color:C.dim,border:"1px solid "+C.line,borderRadius:4,padding:"2px 6px"}}>{e.badge}</span>
+          {e.is_sample && <span style={{fontFamily:mono,fontSize:8.5,color:C.faint,border:"1px dashed "+C.faint,borderRadius:3,padding:"0 4px"}}>SAMPLE</span>}
+          <span style={{flex:1}}/>
+          <span style={{fontFamily:mono,fontSize:11,color:C.dim}}>T-{e.days}d <span style={{color:C.faint}}>· {e.dateLabel}</span></span>
+        </div>
+        <div style={{fontFamily:sans,fontSize:12.5,color:C.dim,lineHeight:1.4,margin:"4px 0 12px"}}>{e.event}</div>
+        <GapGauge e={e}/>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:10}}>
+          <VerdictChip e={e}/>
+          {spreadBad && <span style={{fontFamily:mono,fontSize:9,color:C.rose}}>⚠ {Math.round(e.spread)}% SPREAD</span>}
+          <span style={{flex:1}}/>
+          <span style={{fontFamily:mono,fontSize:10,color:C.faint}}>EDGE</span>
+          <span style={{fontFamily:mono,fontSize:14,fontWeight:700,color:scoreColor(score)}}>{score}</span>
+          <span onClick={ev=>{ev.stopPropagation();onBell();}}
+            style={{cursor:"pointer",fontSize:13,lineHeight:1,padding:"5px 8px",borderRadius:6,
+              color:watched?C.bg:C.dim,background:watched?C.cyan:"transparent",
+              border:"1px solid "+(watched?C.cyan:C.line)}}>{watched?"🔔":"🔕"}</span>
+        </div>
+      </div>
+      {open && <div style={{padding:"2px 14px 16px",borderTop:"1px solid "+C.lineSoft}}>
+        {e.note && <div style={{fontFamily:sans,fontSize:12,color:C.dim,fontStyle:"italic",paddingTop:10}}>{e.note}</div>}
+
+        <SectionLabel>TRADEABLE STRUCTURE — DATA, NOT ADVICE</SectionLabel>
+        {e.straddle ? <div style={{fontFamily:mono,fontSize:11,color:C.text,lineHeight:1.8}}>
+          ATM straddle ${e.straddle} · spot ${e.spot} · exp {e.expiry}<br/>
+          <span style={{color:C.dim}}>{e.callSym} / {e.putSym}</span><br/>
+          OI {e.oi!=null?Math.round(e.oi).toLocaleString():"—"} · spread <span style={{color:spreadBad?C.rose:C.text}}>{e.spread!=null?Math.round(e.spread)+"%":"—"}</span>
+          {spreadBad && <span style={{color:C.rose}}> — edge likely uncapturable at this width</span>}
+        </div> : <div style={{fontFamily:mono,fontSize:10.5,color:C.faint}}>No listed chain spanning the event — no defined-risk structure available. That's information too.</div>}
+
+        <SectionLabel pro>WHY THIS SCORE</SectionLabel>
+        {parts.map(([label,pts])=><div key={label} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{fontFamily:mono,fontSize:10,color:C.dim,width:118,flexShrink:0}}>{label}</span>
+          <div style={{flex:1,height:4,borderRadius:99,background:C.lineSoft}}>
+            <div style={{width:(pts/25*100)+"%",height:4,borderRadius:99,background:pts>=18?C.cyan:pts>=10?C.dim:C.faint}}/>
+          </div>
+          <span style={{fontFamily:mono,fontSize:10,color:C.text,width:36,textAlign:"right"}}>{pts}/25</span>
+        </div>)}
+
+        <SectionLabel pro>EVENT-CLASS DISTRIBUTION</SectionLabel>
+        <Histogram e={e} outcomes={outcomes}/>
+
+        <SectionLabel>INSIDER TAPE · 90D</SectionLabel>
+        {(e.tape&&e.tape.length)? e.tape.slice(0,6).map((r,i)=>
+          <div key={i} style={{fontFamily:mono,fontSize:11,color:r.code==="S"?C.rose:C.text,marginBottom:3}}>
+            {r.code==="S"?"▾":"▴"} {r.owner}{r.role?` (${r.role})`:""} {r.value?(r.code==="S"?"−":"+")+fmt$(r.value):""} · {r.filed}
+          </div>) :
+          <div style={{fontFamily:mono,fontSize:11,color:C.faint}}>· No open-market activity · 90d</div>}
+
+        <SectionLabel>DILUTION / BALANCE SHEET</SectionLabel>
+        <div style={{fontFamily:mono,fontSize:11,color:e.shelf?C.amber:C.text}}>
+          {e.runway!=null?`Cash runway ~${e.runway} qtrs`:"Runway n/a"} · {e.shelfNote||"shelf status pending"}
+        </div>
+
+        <button onClick={onBell} style={{width:"100%",marginTop:16,padding:"10px 0",borderRadius:8,
+          fontFamily:mono,fontSize:11,letterSpacing:"0.1em",cursor:"pointer",
+          color:watched?C.dim:C.bg,background:watched?"transparent":C.cyan,
+          border:"1px solid "+(watched?C.line:C.cyan)}}>
+          {watched?`WATCHING ${e.ticker} · TAP TO UNWATCH`:`WATCH ${e.ticker}`}
+        </button>
+      </div>}
+    </div>
+  );
+}
+
+/* ---------- data loading ---------- */
+function daysUntil(d){ return Math.max(0, Math.round((new Date(d+"T12:00:00")-Date.now())/864e5)); }
+
+function transform(row){
+  const d = row.event_date || row.window_end;
+  return {
+    id: row.id, ticker: row.ticker, company: row.company, cat: row.cat,
+    badge: row.badge||row.cat, event: row.event, is_sample: row.is_sample,
+    days: d?daysUntil(d):0,
+    dateLabel: row.window_label==="Confirmed" ? (row.event_date||"") :
+               (row.window_start? row.window_start+" → "+(row.window_end||"?") : (row.event_date||"window")),
+    window_label: row.window_label,
+    imp: row.implied_move?Math.round(row.implied_move):null,
+    hist: row.hist_move?Math.round(row.hist_move):null,
+    histN: row.hist_n, histMeasured: row.hist_measured,
+    spot: row.spot, straddle: row.straddle_mid, expiry: row.expiry||"—",
+    callSym: row.call_symbol||"—", putSym: row.put_symbol||"—",
+    spread: row.spread_pct, oi: row.open_interest,
+    runway: row.runway_q, shelf: row.shelf_active, shelfNote: row.shelf_note,
+    buys: row.buys_90d||0, sells: row.sells_90d||0, tape: row.tape||[],
+    note: row.note, classLabel: row.event_class,
+  };
+}
+
+async function fetchLive(){
+  const h = {apikey:SUPABASE_ANON_KEY, Authorization:"Bearer "+SUPABASE_ANON_KEY};
+  const [board, outcomes] = await Promise.all([
+    fetch(SUPABASE_URL+"/rest/v1/event_board?select=*", {headers:h}).then(r=>{if(!r.ok)throw 0;return r.json();}),
+    fetch(SUPABASE_URL+"/rest/v1/event_outcomes?select=event_class,realized_move", {headers:h}).then(r=>r.ok?r.json():[]),
+  ]);
+  return { events: board.map(transform), outcomes };
+}
+
+/* ---------- app ---------- */
+function App(){
+  const [mode,setMode] = useState("loading");   // loading | live | sample
+  const [events,setEvents] = useState([]);
+  const [outcomes,setOutcomes] = useState([]);
+  const [filter,setFilter] = useState("ALL");
+  const [view,setView] = useState("feed");
+  const [openId,setOpenId] = useState(null);
+  const [watch,setWatch] = useState(new Set());
+  const [toast,setToast] = useState(null);
+
+  useEffect(()=>{
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY){ setEvents(SAMPLE); setMode("sample"); return; }
+    fetchLive().then(({events,outcomes})=>{
+      setEvents(events.sort((a,b)=>a.days-b.days)); setOutcomes(outcomes); setMode("live");
+    }).catch(()=>{ setEvents(SAMPLE); setMode("sample"); });
+  },[]);
+
+  const shown = events.filter(e=>filter==="ALL"||e.cat===filter);
+  const mispriced = events.filter(e=>pole(e)!=="fair").length;
+  const clusters = events.filter(e=>(e.buys||0)>=3).length;
+  const flash = m=>{setToast(m); setTimeout(()=>setToast(null),2200);};
+  const bell = e=>setWatch(p=>{const n=new Set(p);
+    if(n.has(e.id)){n.delete(e.id);flash("Unwatched — "+e.ticker);}
+    else{n.add(e.id);flash("Watching "+e.ticker+" — alerts fire via your Discord webhook");}
+    return n;});
+
+  return (
+    <div style={{minHeight:"100vh",background:C.bg,fontFamily:sans}}>
+      <div style={{maxWidth:448,margin:"0 auto",padding:"0 14px 64px"}}>
+        <div style={{position:"sticky",top:0,zIndex:40,background:C.bg,paddingTop:16,paddingBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:16,height:16,borderRadius:3,overflow:"hidden",display:"flex"}}>
+              <div style={{flex:1,background:C.cyan}}/><div style={{flex:1,background:C.amber}}/>
+            </div>
+            <span style={{fontFamily:disp,fontWeight:800,fontSize:17,letterSpacing:"0.02em",color:C.text}}>PRICED IN</span>
+            <span style={{flex:1}}/>
+            <span style={{display:"flex",alignItems:"center",gap:6,fontFamily:mono,fontSize:8.5,letterSpacing:"0.1em",color:C.faint}}>
+              <span style={{width:5,height:5,borderRadius:99,background:mode==="live"?C.cyan:C.amber,animation:"pipulse 2s infinite"}}/>
+              {mode==="live"?"LIVE · EDGAR + ALPACA":"SAMPLE MODE"}
+            </span>
+          </div>
+          {mode==="sample" &&
+            <div style={{marginTop:8,fontFamily:mono,fontSize:9,color:C.amber,border:"1px solid "+C.amber+"55",borderRadius:8,padding:"6px 10px"}}>
+              Paste your Supabase URL + anon key into the CONFIG block at the top of this file to go live.
+            </div>}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:12}}>
+            {[[events.length,"UPCOMING EVENTS"],[mispriced,"MISPRICED ≥1.25×"],[clusters,"INSIDER CLUSTERS"]].map(([n,l])=>
+              <div key={l} style={{background:C.panel2,border:"1px solid "+C.lineSoft,borderRadius:10,padding:"8px 10px"}}>
+                <div style={{fontFamily:mono,fontSize:17,fontWeight:700,color:C.text}}>{n}</div>
+                <div style={{fontFamily:mono,fontSize:8.5,letterSpacing:"0.08em",color:C.faint}}>{l}</div>
+              </div>)}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:12,overflowX:"auto"}}>
+            <div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid "+C.line,flexShrink:0}}>
+              {["feed","chart"].map(v=><button key={v} onClick={()=>setView(v)}
+                style={{fontFamily:mono,fontSize:10,letterSpacing:"0.1em",padding:"5px 10px",border:"none",cursor:"pointer",
+                  color:view===v?C.bg:C.dim,background:view===v?C.text:"transparent"}}>{v.toUpperCase()}</button>)}
+            </div>
+            {FILTERS.map(f=><button key={f.id} onClick={()=>setFilter(f.id)}
+              style={{fontFamily:mono,fontSize:10,letterSpacing:"0.06em",padding:"5px 10px",borderRadius:99,cursor:"pointer",flexShrink:0,
+                color:filter===f.id?C.text:C.faint,border:"1px solid "+(filter===f.id?C.dim:C.lineSoft),
+                background:filter===f.id?C.panel:"transparent"}}>{f.label}</button>)}
+          </div>
+        </div>
+
+        {mode==="loading" ? <div style={{fontFamily:mono,fontSize:11,color:C.faint,padding:"40px 0",textAlign:"center"}}>LOADING BOARD…</div> :
+         view==="chart" ? <div style={{marginTop:8}}><ParityChart events={shown} onPick={id=>{setView("feed");setOpenId(id);}}/></div> :
+         <div style={{display:"flex",flexDirection:"column",gap:10,marginTop:8}}>
+           {shown.length===0 && <div style={{fontFamily:mono,fontSize:11,color:C.faint,textAlign:"center",padding:"30px 0"}}>
+             NO UPCOMING EVENTS — add rows to the events table in Supabase.</div>}
+           {shown.map(e=><EventCard key={e.id} e={e} open={openId===e.id}
+             onToggle={()=>setOpenId(openId===e.id?null:e.id)}
+             watched={watch.has(e.id)} onBell={()=>bell(e)} outcomes={outcomes}/>)}
+         </div>}
+
+        <div style={{marginTop:32,textAlign:"center",fontFamily:mono,fontSize:9,color:C.faint,lineHeight:1.8}}>
+          {mode==="sample"?"SAMPLE DATA · FICTIONAL TICKERS · ":""}RESEARCH TOOL, NOT INVESTMENT ADVICE.<br/>
+          Structures shown are market data with liquidity metrics, not recommendations.
+        </div>
+      </div>
+      {toast && <div style={{position:"fixed",bottom:20,left:"50%",transform:"translateX(-50%)",zIndex:50,
+        background:C.panel,border:"1px solid "+C.cyan+"66",borderRadius:8,padding:"8px 14px",
+        fontFamily:mono,fontSize:11,color:C.text,whiteSpace:"nowrap"}}>{toast}</div>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

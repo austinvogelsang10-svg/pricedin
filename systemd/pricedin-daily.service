@@ -1,0 +1,9 @@
+[Unit]
+Description=Priced In daily pass (insiders + balance + outcomes)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/pricedin
+EnvironmentFile=/opt/pricedin/.env
+ExecStart=/opt/pricedin/.venv/bin/python -m workers.daily
