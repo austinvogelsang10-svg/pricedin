@@ -112,8 +112,13 @@ def sane_date(d):
 # ---------- supabase insert with dedupe ----------
 
 def push_events(rows):
+    """Returns inserted count, or None on failure (so callers can avoid
+    advancing their seen-state and will retry the same window next pass)."""
     if not rows:
         return 0
+    # PostgREST bulk insert requires uniform keys across all rows.
+    keys = sorted({k for r in rows for k in r})
+    rows = [{k: r.get(k) for k in keys} for r in rows]
     r = requests.post(
         f"{SUPABASE_URL}/rest/v1/events?on_conflict=ticker,event_class,event_date",
         headers={"apikey": SERVICE_KEY,
@@ -124,7 +129,7 @@ def push_events(rows):
     if r.status_code >= 400:
         log.error("discover insert -> %s %s (did you run db/002 + db/003?)",
                   r.status_code, r.text[:300])
-        return 0
+        return None
     return len(rows)
 
 # ---------- EDGAR full-text search plumbing ----------
@@ -333,6 +338,10 @@ def run_fast():
                      "sources": [f"424B4 · {i['adsh']}"]})
 
     n = push_events(rows)
+    if n is None:
+        log.warning("insert failed — discovery state NOT advanced; "
+                    "same window will be retried next pass")
+        return
     kv_set("discover_state", {**state, "last_fts": TODAY.isoformat(),
                               "seen": sorted(seen)[-800:]})
     log.info("discover fast: +%d events (13D/proxy/8-K/lockup), %d docs opened",
@@ -439,6 +448,9 @@ def run_slow():
                      "sources": [f"CT.gov · {nct}"]})
 
     n = push_events(rows)
+    if n is None:
+        log.warning("insert failed — CT.gov state NOT advanced; will retry")
+        return
     kv_set("discover_state", {**state, "seen_nct": sorted(seen_nct)[-1500:]})
     log.info("discover slow: +%d Ph3 readout windows (CT.gov)", n)
 

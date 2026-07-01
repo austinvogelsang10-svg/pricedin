@@ -48,6 +48,10 @@ def sb_select(table, params=None):
 def sb_insert(table, rows, upsert=False):
     if not rows:
         return []
+    # PostgREST bulk writes require every row to share the same key set
+    # (else: PGRST102 "All object keys must match"). Normalize with nulls.
+    keys = sorted({k for r in rows for k in r})
+    rows = [{k: r.get(k) for k in keys} for r in rows]
     extra = {"Prefer": "return=minimal"}
     if upsert:
         extra["Prefer"] = "resolution=merge-duplicates,return=minimal"
