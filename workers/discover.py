@@ -38,7 +38,7 @@ import requests
 
 from .common import (log, sec_get, kv_get, kv_set, TODAY,
                      SUPABASE_URL, SERVICE_KEY, spot_price, alpaca_get,
-                     ALPACA_TRADE)
+                     ALPACA_TRADE, cik_for)
 
 FTS = "https://efts.sec.gov/LATEST/search-index"
 CTG = "https://clinicaltrials.gov/api/v2/studies"
@@ -47,6 +47,9 @@ MAX_SLOW_INSERTS = int(os.environ.get("DISCOVER_MAX_INSERTS", "12"))
 MAX_DOC_FETCH    = int(os.environ.get("DISCOVER_MAX_DOCS", "14"))
 PRICE_MIN        = float(os.environ.get("TRADEABLE_MIN_PRICE", "1"))
 PRICE_MAX        = float(os.environ.get("TRADEABLE_MAX_PRICE", "1000"))
+# Above this market cap, a single Ph3 readout isn't a company-level binary
+# event — the class priors (calibrated on small/mid caps) don't apply.
+MAX_READOUT_CAP_B = float(os.environ.get("MAX_READOUT_CAP_B", "10"))
 
 MONTHS = ("January|February|March|April|May|June|July|August|"
           "September|October|November|December")
@@ -108,6 +111,25 @@ def tradeable(ticker):
 
 def sane_date(d):
     return d and TODAY < d <= TODAY + dt.timedelta(days=400)
+
+def mkt_cap_b(ticker):
+    """Approximate market cap in $B: latest XBRL shares outstanding × spot.
+    Returns None if unknown (callers fail open)."""
+    try:
+        cik = cik_for(ticker)
+        if not cik:
+            return None
+        j = sec_get(f"https://data.sec.gov/api/xbrl/companyconcept/"
+                    f"CIK{cik:010d}/dei/EntityCommonStockSharesOutstanding.json")
+        pts = [p for p in (j.get("units") or {}).get("shares", [])
+               if p.get("end")]
+        if not pts:
+            return None
+        shares = float(sorted(pts, key=lambda p: p["end"])[-1]["val"])
+        px = spot_price(ticker)
+        return shares * px / 1e9 if px else None
+    except Exception:
+        return None
 
 # ---------- supabase insert with dedupe ----------
 
@@ -427,6 +449,11 @@ def run_slow():
             log.info("CT.gov %s: no ticker match for '%s' — skipped", nct, sponsor)
             continue
         if noisy(sponsor) or not tradeable(tkr)[0]:
+            continue
+        cap = mkt_cap_b(tkr)
+        if cap and cap > MAX_READOUT_CAP_B:
+            log.info("CT.gov %s: %s ~$%.0fB cap — readout not company-level "
+                     "binary at this size, skipped", nct, tkr, cap)
             continue
         pcd = ((p.get("statusModule") or {})
                .get("primaryCompletionDateStruct") or {}).get("date")
